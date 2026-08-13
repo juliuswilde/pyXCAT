@@ -1,6 +1,22 @@
-def main():
-    print("Hello from pyxcat!")
+from pathlib import Path
+import os
+import logging
 
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger()
 
-if __name__ == "__main__":
-    main()
+import pyxcat
+
+exe_path = None
+outpath = None
+
+xcat = pyxcat.xcat.XCAT(exe_path)
+
+params = pyxcat.parameters.XCATParameters()
+params.image_params.out_frames = 1
+
+post_process_ops = {
+    "to_nifti": True
+}
+os.chdir(exe_path.parent)
+xcat.generate(params, outpath, "default", post_processing_options=post_process_ops)

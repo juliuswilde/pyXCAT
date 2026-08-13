@@ -1,9 +1,10 @@
+import re
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
 
-from pyxcat.parameter_sets import ImageParameters, BodyParameters
+from pyxcat.parameter_sets import *
 
 # XCAT .par files line the trailing "# description" comments up on a fixed column,
 # padded with hard tabs (see e.g. general_samp_GI_motility.par).
@@ -18,24 +19,41 @@ SECTION_TRAIL_DASHES = 27
 # Section title each parameter set is written under, in file order.
 SECTION_TITLES = {
     "image_params": "Image dimensions",
-    "body_params": "Body Setup"
+    "body_params": "Body Setup",
+    "respiration_params": "Respiration setup",
+    "cardiac_params": "Cardiac",
+    "lesion_params": "Lesion",
+    "activity_params": "Activity Setup and Values",
+    "attenuation_params": "Attenuation Setup",
 }
 
 
 class XCATParameters(BaseModel):
-
-    image_params: ImageParameters = Field(default_factory=ImageParameters)
+    activity_params: ActivityParameters = Field(default_factory=ActivityParameters)
+    attenuation_params: AttenuationParameters = Field(default_factory=AttenuationParameters)
     body_params: BodyParameters = Field(default_factory=BodyParameters)
+    cardiac_params: CardiacParameters = Field(default_factory=CardiacParameters)
+    image_params: ImageParameters = Field(default_factory=ImageParameters)
+    lesion_params: LesionParameters = Field(default_factory=LesionParameters)
+    respiration_params: RespirationParameters = Field(default_factory=RespirationParameters)
+    
 
     @classmethod
     def from_par(cls, path_to_par_file: Path):
-        pass
+        defaults = XCATParameters()
+
+        for key, value in iter(defaults):
+            extracted = extract_paremter_set_from_par(path_to_par_file, value)
+            setattr(defaults, key, extracted)
+
+        return defaults
 
     @classmethod
     def from_json(cls, path_to_json_file: Path):
-        pass
+        raise NotImplementedError
 
     def save_as_par(self, save_path: Path):
+        self.resolve_all_paths()
         sections = [
             _format_section(SECTION_TITLES[name], getattr(self, name))
             for name in SECTION_TITLES
@@ -43,9 +61,26 @@ class XCATParameters(BaseModel):
 
         with open(save_path, "w") as f:
             f.write("\n\n".join(sections) + "\n")
+            f.write(parameter_notes)
 
     def save_as_json(self, save_path: Path):
-        pass
+        raise NotImplementedError
+
+    def resolve_all_paths(self):
+        for key, value in iter(self):
+            if isinstance(value, Path):
+                resolved = value.resolve()
+                if not resolved.exists() or not resolved.is_file():
+                    raise FileNotFoundError(f"{key}: {value} could not be found (resolved to: {resolved})")
+                setattr(self, key, resolved)
+
+            if issubclass(type(value), BaseModel):
+                for nested_key, nested_value in iter(value):
+                    if isinstance(nested_value, Path):
+                        resolved = nested_value.resolve()
+                        if not resolved.exists() or not resolved.is_file():
+                            raise FileNotFoundError(f"{key}.{nested_key}: {nested_value} could not be found (resolved to: {resolved})")
+                        setattr(value, nested_key, resolved)
 
 
 def _format_section(title: str, params: BaseModel) -> str:
@@ -77,3 +112,18 @@ def _format_value(value: Any) -> str:
     if isinstance(value, bool):
         return "1" if value else "0"
     return str(value)
+
+def extract_paremter_set_from_par(path_to_par: Path, parameter_set: BaseModel):
+    if not path_to_par.exists() or not path_to_par.suffix == ".par":
+        raise FileNotFoundError(f"No parameter file at: {path_to_par}")
+    with open(path_to_par, "r") as f:
+        parameter_file = f.read()
+
+    values: dict[str, str] = {}
+    for key, _ in iter(parameter_set):
+        match = re.search(rf"^{re.escape(key)}\s*=\s*(.+?)\s*(?:#.*)?$", parameter_file, re.MULTILINE)
+        if match is None:
+            raise ValueError(f"Parameter '{key}' not found in {path_to_par}")
+        values[key] = match.group(1)
+
+    return type(parameter_set)(**values)

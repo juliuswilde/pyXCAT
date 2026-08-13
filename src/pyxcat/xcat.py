@@ -22,21 +22,32 @@ class XCAT:
         parameter_path = save_dir / f"{run_name}_used_parameters.par"
         params.save_as_par(parameter_path)
 
-        command = f"{self.xcat_path} {parameter_path} {save_dir / run_name}"
+        command = f"{self.xcat_path} {parameter_path.resolve()} {(save_dir / run_name).resolve()}"
 
         self.logger.info("Starting to phantom generation" + "\n" + "*"*20)
         start_time = time.time()
 
-        process = subprocess.Popen(command)#, stdout=subprocess.PIPE)
-        out, err = process.communicate()
+        process = subprocess.Popen(
+            command, cwd=self.xcat_path.parent, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, text=True, bufsize=1,
+        )
+        for line in process.stdout:
+            self.logger.info(line.rstrip())
+        process.wait()
 
         stop_time = time.time()
-        self.logger.info("\n" + "*"*20 + f"Phantom generated in {(stop_time - start_time):.1f}s\n" + "*"*20)
+        self.logger.info("\n" + "*"*20 + f"\nPhantom generated in {(stop_time - start_time):.1f}s\n" + "*"*20)
 
-        #if not post_processing_options:
-        #    return
+        # organ_ids.txt always gets saved in XCAT folder
+        if params.image_params.color_code and (params.image_params.act_phan_each or params.image_params.act_phan_ave):
+            # if it did get created move it to output
+            if (self.xcat_path.parent / "organ_ids.txt").exists() and not (save_dir / "organ_ids.txt").exists():
+                (self.xcat_path.parent / "organ_ids.txt").rename(save_dir / "organ_ids.txt")
 
-        if True:#post_processing_options.get("to_nifti"):
+        if not post_processing_options:
+            return
+
+        if post_processing_options.get("to_nifti"):
             self._convert_output_to_nifti(params, save_dir, run_name)
 
 
