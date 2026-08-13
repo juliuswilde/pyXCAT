@@ -1,3 +1,4 @@
+import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -5,6 +6,8 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from pyxcat.parameter_sets import *
+
+logger = logging.getLogger(__name__)
 
 # XCAT .par files line the trailing "# description" comments up on a fixed column,
 # padded with hard tabs (see e.g. general_samp_GI_motility.par).
@@ -25,6 +28,17 @@ SECTION_TITLES = {
     "lesion_params": "Lesion",
     "activity_params": "Activity Setup and Values",
     "attenuation_params": "Attenuation Setup",
+    "gi_motility_params": "GI Motility Parameters",
+    "user_object_params": "User object",
+}
+
+# Filenames XCAT only opens when the flag next to them is switched on. They keep
+# their placeholder name (and are not checked for existence) while it is off.
+GATED_PATHS = {
+    "user_objects_file": "read_user_objects",
+    "activ_material_table_filename": "use_activ_material_table",
+    "tumor_motion_filename": "tumor_motion_flag",
+    "tumor_rotation_filename": "tumor_rotation_flag",
 }
 
 
@@ -36,7 +50,8 @@ class XCATParameters(BaseModel):
     image_params: ImageParameters = Field(default_factory=ImageParameters)
     lesion_params: LesionParameters = Field(default_factory=LesionParameters)
     respiration_params: RespirationParameters = Field(default_factory=RespirationParameters)
-    
+    gi_motility_params: GIMotilityParameters = Field(default_factory=GIMotilityParameters)
+    user_object_params: UserObjectParameters = Field(default_factory=UserObjectParameters)
 
     @classmethod
     def from_par(cls, path_to_par_file: Path):
@@ -70,17 +85,25 @@ class XCATParameters(BaseModel):
         for key, value in iter(self):
             if isinstance(value, Path):
                 resolved = value.resolve()
-                if not resolved.exists() or not resolved.is_file():
+                if not resolved.is_file():
                     raise FileNotFoundError(f"{key}: {value} could not be found (resolved to: {resolved})")
                 setattr(self, key, resolved)
 
             if issubclass(type(value), BaseModel):
                 for nested_key, nested_value in iter(value):
-                    if isinstance(nested_value, Path):
-                        resolved = nested_value.resolve()
-                        if not resolved.exists() or not resolved.is_file():
-                            raise FileNotFoundError(f"{key}.{nested_key}: {nested_value} could not be found (resolved to: {resolved})")
-                        setattr(value, nested_key, resolved)
+                    if not isinstance(nested_value, Path):
+                        continue
+
+                    # XCAT never opens these unless their flag is set, so an
+                    # unreadable placeholder name is fine while it is off.
+                    gate = GATED_PATHS.get(nested_key)
+                    if gate is not None and not getattr(value, gate):
+                        continue
+
+                    resolved = nested_value.resolve()
+                    if not resolved.is_file():
+                        raise FileNotFoundError(f"{key}.{nested_key}: {nested_value} could not be found (resolved to: {resolved})")
+                    setattr(value, nested_key, resolved)
 
 
 def _format_section(title: str, params: BaseModel) -> str:
@@ -122,8 +145,12 @@ def extract_paremter_set_from_par(path_to_par: Path, parameter_set: BaseModel):
     values: dict[str, str] = {}
     for key, _ in iter(parameter_set):
         match = re.search(rf"^{re.escape(key)}\s*=\s*(.+?)\s*(?:#.*)?$", parameter_file, re.MULTILINE)
+        # A missing entry is not an error: XCAT itself falls back to a built-in
+        # default, and no par file in circulation lists all 377 parameters. Keep
+        # the field default so the same value is written back out.
         if match is None:
-            raise ValueError(f"Parameter '{key}' not found in {path_to_par}")
+            logger.debug("Parameter '%s' not found in %s, keeping default", key, path_to_par)
+            continue
         values[key] = match.group(1)
 
     return type(parameter_set)(**values)

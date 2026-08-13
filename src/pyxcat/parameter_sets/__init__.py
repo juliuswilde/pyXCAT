@@ -5,8 +5,10 @@ from pyxcat.parameter_sets.cardiac import CardiacParameters
 from pyxcat.parameter_sets.image import ImageParameters
 from pyxcat.parameter_sets.lesion import LesionParameters
 from pyxcat.parameter_sets.respiration import RespirationParameters
+from pyxcat.parameter_sets.user_object import UserObjectParameters
+from pyxcat.parameter_sets.gi_motility import GIMotilityParameters
 
-parameter_notes ="""
+parameter_notes = """
 #--------------------------------------------------------------------------
 #                             NOTES:
 #--------------------------------------------------------------------------

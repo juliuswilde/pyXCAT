@@ -8,8 +8,7 @@ logger = logging.getLogger()
 import pyxcat
 
 exe_path = None
-outpath = None
-
+outpath = Path("output").resolve()
 xcat = pyxcat.xcat.XCAT(exe_path)
 
 params = pyxcat.parameters.XCATParameters()
